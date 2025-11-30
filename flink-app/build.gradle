@@ -1,0 +1,109 @@
+plugins {
+	id 'java'
+	id 'org.springframework.boot' version '3.5.7'
+	id 'io.spring.dependency-management' version '1.1.7'
+	id 'com.github.johnrengelman.shadow' version '8.1.1'
+}
+
+group = 'com.swift'
+version = '0.0.1-SNAPSHOT'
+description = 'Flink Remittance Stream Processing'
+
+java {
+	toolchain {
+		languageVersion = JavaLanguageVersion.of(17)
+	}
+}
+
+repositories {
+	mavenCentral()
+	maven { url "https://packages.confluent.io/maven/" }
+	maven { url "https://repo.maven.apache.org/maven2/" }
+	maven { url "https://repository.apache.org/content/repositories/releases/" }
+}
+
+// Disable Spring Boot jar (we don't need it for Flink jobs)
+bootJar {
+	enabled = false
+}
+
+// Configure normal jar as a fat jar, but exclude Kafka client classes
+jar {
+	enabled = true
+	archiveClassifier = ''
+	archiveBaseName = 'stream-processing-flink'
+	archiveVersion = ''
+	duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+
+	manifest {
+		attributes(
+				'Main-Class': 'com.swift.flink_app.streamProcessing.StreamJob'
+		)
+	}
+
+	from {
+		configurations.runtimeClasspath.filter {
+			!it.name.contains("kafka-clients") // exclude just Kafka client
+		}.collect { it.isDirectory() ? it : zipTree(it) }
+	}
+
+
+	// Exclude signature files
+	exclude 'META-INF/*.SF'
+	exclude 'META-INF/*.DSA'
+	exclude 'META-INF/*.RSA'
+}
+
+dependencies {
+
+	implementation 'org.springframework.boot:spring-boot-starter-web'
+	implementation 'org.springframework.kafka:spring-kafka'
+
+	compileOnly 'org.projectlombok:lombok'
+	annotationProcessor 'org.projectlombok:lombok'
+
+	runtimeOnly 'org.postgresql:postgresql'
+
+
+	// Flink core & Kafka
+	implementation 'org.apache.flink:flink-streaming-java:1.18.0'
+	implementation 'org.apache.flink:flink-clients:1.18.0'
+	implementation 'org.apache.flink:flink-connector-kafka:3.1.0-1.18'
+	implementation 'org.apache.kafka:kafka-clients:3.6.0'
+
+
+	// Flink JDBC connector
+	implementation "org.apache.flink:flink-connector-jdbc:3.1.0-1.17"
+
+	// JSON handling
+	implementation 'com.fasterxml.jackson.core:jackson-databind'
+	implementation 'com.fasterxml.jackson.datatype:jackson-datatype-jsr310'
+
+	// Faker for dummy data
+	implementation('com.github.javafaker:javafaker:1.0.2') {
+		exclude group: 'org.yaml', module: 'snakeyaml'
+	}
+	implementation 'org.yaml:snakeyaml:2.4'
+
+	// Testing
+	testImplementation 'org.springframework.boot:spring-boot-starter-test'
+	testImplementation 'org.springframework.kafka:spring-kafka-test'
+	testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+shadowJar {
+	archiveBaseName.set('stream-processing-flink-fat')
+	archiveClassifier.set('')
+	archiveVersion.set('1.0')
+}
+
+// Force specific snakeyaml version
+configurations.all {
+	resolutionStrategy {
+		force 'org.yaml:snakeyaml:2.4'
+	}
+}
+
+tasks.named('test') {
+	useJUnitPlatform()
+}
