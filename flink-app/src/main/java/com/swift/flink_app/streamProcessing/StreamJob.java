@@ -102,7 +102,9 @@ public class StreamJob {
 
         //windowed aggregation
         DataStream<String> metricsStream = eventStream
-                .windowAll(TumblingEventTimeWindows.of(Time.minutes(1)))
+              //  .windowAll(TumblingEventTimeWindows.of(Time.minutes(1)))
+                .windowAll(TumblingEventTimeWindows.of(Time.seconds(10)))  // emits every 10s
+
                 .apply(new AllWindowFunction<RemittanceTransaction, String, TimeWindow>() {
                     @Override
                     public void apply(TimeWindow window, Iterable<RemittanceTransaction> events, Collector<String> out) throws Exception {

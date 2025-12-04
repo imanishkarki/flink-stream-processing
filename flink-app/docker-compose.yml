@@ -23,15 +23,15 @@ services:
       zookeeper:
         condition: service_healthy
     ports:
-      - "9093:9093"  # internal broker listener
-      - "29093:29093"  # host-accessible listener for Spring Boot
+      - "9093:9093"
+      - "29093:29093"
     environment:
       KAFKA_BROKER_ID: 1
       KAFKA_LISTENERS: INTERNAL://0.0.0.0:9093,EXTERNAL://0.0.0.0:29093
-      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka:9093,EXTERNAL://localhost:29093
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka_flink:9093,EXTERNAL://localhost:29093
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT
       KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
-      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper_flink:2181
       KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
     networks:
@@ -43,13 +43,17 @@ services:
 
   flink-jobmanager:
     image: flink:1.18.0-java17
-    container_name: flink-jobmanager_new
+    container_name: flink-jobmanager
     ports:
-      - "8082:8081" #flink UI
+      - "8082:8081"
+      - "9250:9251"
     environment:
-      - JOB_MANAGER_RPC_ADDRESS=flink-jobmanager
+      JOB_MANAGER_RPC_ADDRESS: flink-jobmanager
     volumes:
-      - ./build/libs:/opt/flink-jobs
+      - ./flink-conf/flink-conf.yaml:/opt/flink/conf/flink-conf.yaml:ro
+      - ./build/libs/stream-processing-flink-fat-1.0.jar:/opt/flink/usrlib/stream-processing-flink-fat-1.0.jar
+      # FIX: Correctly mounting the JAR from the root directory (where this YML is located)
+      - ./flink-metrics-prometheus-1.18.0.jar:/opt/flink/plugins/metrics-prometheus/flink-metrics-prometheus-1.18.0.jar
 
     command: jobmanager
     networks:
@@ -57,18 +61,41 @@ services:
 
   flink-taskmanager:
     image: flink:1.18.0-java17
-    container_name: flink-taskmanager_new
+    container_name: flink-taskmanager
     ports:
-      - "9251:9251" #metrics
+      - "9252:9252"
     depends_on:
       - flink-jobmanager
     environment:
-      - JOB_MANAGER_RPC_ADDRESS=flink-jobmanager
-
+      JOB_MANAGER_RPC_ADDRESS: flink-jobmanager
+      METRICS_REPORTER_PROM_PORT: 9252
+    volumes:
+      - ./flink-conf/flink-conf.yaml:/opt/flink/conf/flink-conf.yaml:ro
+      # FIX: Correctly mounting the JAR from the root directory (where this YML is located)
+      - ./flink-metrics-prometheus-1.18.0.jar:/opt/flink/plugins/metrics-prometheus/flink-metrics-prometheus-1.18.0.jar
     command: taskmanager
     networks:
       - flink-kafka-net
 
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: prometheus
+    volumes:
+      - ./prometheus/prometheus.yaml:/etc/prometheus/prometheus.yml
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+    ports:
+      - "9070:9090"
+    networks:
+      - flink-kafka-net
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: grafana
+    ports:
+      - "3000:3000"
+    networks:
+      - flink-kafka-net
 
 networks:
   flink-kafka-net:

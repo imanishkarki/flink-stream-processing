@@ -1,0 +1,25 @@
+global:
+  scrape_interval: 10s
+  evaluation_interval: 10s
+
+scrape_configs:
+  # Flink metrics
+  - job_name: 'flink'
+    static_configs:
+      - targets:
+          - 'flink-jobmanager:9251'  # CORRECTED - use service name
+          - 'flink-taskmanager:9251'  # CORRECTED - use service name
+
+
+  # Spring Boot metrics
+  - job_name: 'spring-boot'
+    metrics_path: '/actuator/prometheus'
+    static_configs:
+      - targets:
+          - 'host.docker.internal:8088'
+
+#  # Optional: Kafka metrics (if JMX exporter is enabled)
+#  - job_name: 'kafka'
+#    static_configs:
+#      - targets:
+#          - 'kafka_flink:9092'

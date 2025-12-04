@@ -71,6 +71,9 @@ dependencies {
 	implementation 'org.apache.flink:flink-connector-kafka:3.1.0-1.18'
 	implementation 'org.apache.kafka:kafka-clients:3.6.0'
 
+	//webSocket
+	implementation 'org.springframework.boot:spring-boot-starter-websocket'
+
 
 	// Flink JDBC connector
 	implementation "org.apache.flink:flink-connector-jdbc:3.1.0-1.17"
@@ -79,6 +82,13 @@ dependencies {
 	implementation 'com.fasterxml.jackson.core:jackson-databind'
 	implementation 'com.fasterxml.jackson.datatype:jackson-datatype-jsr310'
 
+	//implementation 'org.json:json:20230227'
+
+
+	//prometheus
+	implementation 'io.micrometer:micrometer-registry-prometheus'
+	implementation 'org.springframework.boot:spring-boot-starter-actuator'
+	
 	// Faker for dummy data
 	implementation('com.github.javafaker:javafaker:1.0.2') {
 		exclude group: 'org.yaml', module: 'snakeyaml'

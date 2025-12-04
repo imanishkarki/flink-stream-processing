@@ -1,7 +1,6 @@
 server:
   port: 8088
 
-
 spring:
   kafka:
     bootstrap-servers: localhost:29093  # ← Changed from 29093 to 9092
@@ -16,7 +15,26 @@ app:
   kafka:
     topic: remittance-stream
 
+management:
+  endpoints:
+    web:
+      exposure:
+        include: prometheus
+
+  endpoint:
+    prometheus:
+      enabled: true
+
+  prometheus:
+    metrics:
+      export:
+        enabled: true
+
+
+
   task:
     scheduling:
       pool:
         size: 2
+
+
