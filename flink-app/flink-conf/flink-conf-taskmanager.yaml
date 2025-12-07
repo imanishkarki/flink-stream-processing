@@ -1,0 +1,27 @@
+# -------------------- General Job/Task Manager Configuration --------------------
+jobmanager.rpc.address: flink-jobmanager
+jobmanager.web.address: flink-jobmanager
+jobmanager.memory.process.size: 1024m
+
+taskmanager.memory.process.size: 2048m
+taskmanager.numberOfTaskSlots: 1
+
+# -------------------- Prometheus Metrics Reporter Configuration --------------------
+metrics.reporters: prom
+
+metrics.reporter.prom.class: org.apache.flink.metrics.prometheus.PrometheusReporter
+metrics.reporter.prom.factory.class: org.apache.flink.metrics.prometheus.PrometheusReporterFactory
+
+# Bind to all interfaces
+metrics.reporter.prom.host: 0.0.0.0
+
+# FIXED PORT for TaskManager - NOT a range
+metrics.reporter.prom.port: 9252
+
+# -------------------- Latency Tracking --------------------
+metrics.latency.interval: 5000
+metrics.latency.granularity: operator
+
+# -------------------- Other Ports --------------------
+blob.server.port: 6124
+query.server.port: 6125

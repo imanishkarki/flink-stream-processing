@@ -30,13 +30,15 @@ public class StreamJob {
         StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
         env.setParallelism(1);
 
+        // --- CRITICAL: Ensure Watermark generation is active for latency metrics ---
+        env.getConfig().setAutoWatermarkInterval(500L); // Generate watermarks every 500ms
+
         Properties props = new Properties();
         props.setProperty("bootstrap.servers", "kafka:9093"); //inside docker network
         props.setProperty("group.id", "flink-group");
-       // props.setProperty("auto.offset.reset", "earliest");
+        // props.setProperty("auto.offset.reset", "earliest");
 
-        //Purpose: This sets up a Kafka consumer object for Flink.
-        //create kafka consumer for topic
+        // Purpose: This sets up a Kafka consumer object for Flink.
         FlinkKafkaConsumer<String> consumer = new FlinkKafkaConsumer<>(
                 "remittance-stream",
                 new SimpleStringSchema(),
@@ -48,31 +50,32 @@ public class StreamJob {
                 props
         );
 
-        DataStream<String>  riskStreamRaw = env.addSource(riskConsumer);
+        // --- 1. Risk Stream (for real-time risk labeling) ---
+
+        DataStream<String>  riskStreamRaw = env.addSource(riskConsumer).name("Kafka Source - Risk");
         riskConsumer.setStartFromLatest();
 
         ObjectMapper mappers = new ObjectMapper();
 
         DataStream<RemittanceTransaction> riskStream = riskStreamRaw
-                .map(json -> mappers.readValue(json, RemittanceTransaction.class))
+                .map(json -> mappers.readValue(json, RemittanceTransaction.class)).name("JSON Parse - Risk")
                 .assignTimestampsAndWatermarks(
                         WatermarkStrategy.<RemittanceTransaction>forBoundedOutOfOrderness( Duration.ofSeconds(5) )
                                 .withTimestampAssigner((event, ts) -> event.getTimestamp())
-                );
+                ).name("Watermark Strategy - Risk"); // Watermarks are assigned here
 
         DataStream<RiskLabel> labelledStream = riskStream
                 .map(tx -> {
                     RiskLabel riskLabel = new RiskLabel();
-                    //long processingTime = System.currentTimeMillis();
                     long processingStart = System.currentTimeMillis();
                     riskLabel.setProcessingTime(String.valueOf(processingStart));
 
-                    long latency = processingStart -  (long) riskLabel.getTimeStamp();
+                    long latency = processingStart -  tx.getTimestamp();
                     riskLabel.setLatency(String.valueOf(latency));
 
                     riskLabel.setRiskType(tx.getAmount() > 1000? "RISK":"SAFE");
                     return riskLabel;
-                });
+                }).name("Risk Labeler");
 
         // Print the enriched events
         labelledStream
@@ -83,27 +86,28 @@ public class StreamJob {
                         tx.getRiskType(),
                         tx.getProcessingTime(),
                         tx.getLatency()
-                ))
+                )).name("Risk Printer")
                 .print();
 
-        //add kafka source
-        //Attach it to Flink so it becomes part of the Flink streaming pipeline.
-        DataStream<String> stream = env.addSource(consumer);
+        // --- 2. Event Stream (for windowed metrics aggregation) ---
+
+        DataStream<String> stream = env.addSource(consumer).name("Kafka Source - Metrics");
         consumer.setStartFromLatest();
 
         ObjectMapper mapper = new ObjectMapper();
-        //Convert json to POJO
+
+        // Convert json to POJO and assign monotonous timestamps for metrics calculation
         DataStream<RemittanceTransaction> eventStream =
-                stream.map(json -> mapper.readValue(json, RemittanceTransaction.class))
+                stream.map(json -> mapper.readValue(json, RemittanceTransaction.class)).name("JSON Parse - Metrics")
                         .assignTimestampsAndWatermarks(
                                 WatermarkStrategy.<RemittanceTransaction>forMonotonousTimestamps()
                                         .withTimestampAssigner((event, ts) -> event.getTimestamp())
-                        );
+                        ).name("Watermark Strategy - Metrics");
 
-        //windowed aggregation
+        // Windowed aggregation
         DataStream<String> metricsStream = eventStream
-              //  .windowAll(TumblingEventTimeWindows.of(Time.minutes(1)))
                 .windowAll(TumblingEventTimeWindows.of(Time.seconds(10)))  // emits every 10s
+                // The .name() call must be after the final transformation (.apply in this case).
 
                 .apply(new AllWindowFunction<RemittanceTransaction, String, TimeWindow>() {
                     @Override
@@ -121,15 +125,15 @@ public class StreamJob {
                                 if (e.getExchangeRate() == 0){
                                     throw new IllegalArgumentException("Exchange rate cant be 0");
                                 }
-                                // Business logic for each event (here simple aggregation)
+                                // Business logic for each event (simple aggregation)
                                 totalAmount += e.getAmount();
                                 totalRate += e.getExchangeRate();
                                 if (e.getAmount() < minAmount) minAmount = e.getAmount();
                                 if (e.getAmount() > maxAmount) maxAmount = e.getAmount();
 
-                                successCount++; // counted as processed successfully
+                                successCount++;
                             } catch (Exception ex) {
-                                failedCount++; // counted as failed
+                                failedCount++;
                             }
                         }
 
@@ -142,6 +146,7 @@ public class StreamJob {
                             maxAmount = 0;
                         }
 
+                        // Generate metrics JSON string
                         String metricsJson = String.format(
                                 "{ \"windowStart\": %d, " +
                                         "\"windowEnd\": %d, " +
@@ -165,14 +170,10 @@ public class StreamJob {
 
                         out.collect(metricsJson);
                     }
-                });
+                })
+                .name("Tumbling Window Aggregation"); // FIX: .name() moved here
 
-//        // print metrics to stdout (you already saw these in the job logs)
-//        metricsStream
-//                .map(m -> String.format("{ \"windowStart\": %d, \"windowEnd\": %d, \"count\": %d, \"avgAmount\": %.2f, \"avgExchangeRate\": %.4f, \"minAmount\": %.2f, \"maxAmount\": %.2f }",
-//                        m.windowStart, m.windowEnd, m.count, m.avgAmount, m.avgExchangeRate, m.minAmount, m.maxAmount))
-//                .print();
-
+        // --- JDBC Sink Configuration ---
         final String dbUrl = System.getenv().getOrDefault("METRICS_DB_URL", "jdbc:postgresql://host.docker.internal:5432/remittance_db");
         final String dbUser = System.getenv().getOrDefault("METRICS_DB_USER", "postgres");
         final String dbPassword = System.getenv().getOrDefault("METRICS_DB_PASSWORD", "manish1234");
@@ -184,7 +185,8 @@ public class StreamJob {
         // Convert JSON string → Metric POJO for JDBC sink
         DataStream<Metric> metricPojoStream = metricsStream.map(json ->
                 new ObjectMapper().readValue(json, Metric.class)
-        );
+        ).name("JSON to Metric POJO");
+
         metricPojoStream.addSink(
                 JdbcSink.sink(
                         insertSql,
@@ -203,17 +205,17 @@ public class StreamJob {
                                 .withBatchSize(1)
                                 .withBatchIntervalMs(200)
                                 .build(),
-        new JdbcConnectionOptions.JdbcConnectionOptionsBuilder()
-                .withUrl(dbUrl)
-                .withDriverName("org.postgresql.Driver")
-                .withUsername(dbUser)
-                .withPassword(dbPassword)
-                .build()
+                        new JdbcConnectionOptions.JdbcConnectionOptionsBuilder()
+                                .withUrl(dbUrl)
+                                .withDriverName("org.postgresql.Driver")
+                                .withUsername(dbUser)
+                                .withPassword(dbPassword)
+                                .build()
                 )
-        );
+        ).name("PostgreSQL Metrics Sink");
 
-        // --- 6. Output metrics ---
-        metricsStream.print(); // you can later replace this with DB sink or Kafka sink
+        // --- Output metrics ---
+        metricsStream.print();
 
         env.execute("Remittance Metrics Job");
     }

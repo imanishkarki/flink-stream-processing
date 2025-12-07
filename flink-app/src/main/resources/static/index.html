@@ -4,7 +4,6 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Flink Live Metrics Dashboard</title>
-    <!-- Load Tailwind CSS for aesthetics -->
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
         tailwind.config = {
@@ -23,10 +22,11 @@
         }
     </script>
     <style>
-        /* General styling */
-        body {
-            font-family: 'Inter', sans-serif;
-        }
+        body { font-family: 'Inter', sans-serif; }
+        .metric-card { transition: all 0.3s ease; }
+        .metric-card:hover { transform: translateY(-2px); box-shadow: 0 10px 30px rgba(76, 120, 160, 0.3); }
+        .pulse { animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite; }
+        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: .5; } }
     </style>
 </head>
 <body class="bg-bg-dark text-gray-100 min-h-screen p-4 sm:p-8">
@@ -36,22 +36,51 @@
         <h1 class="text-4xl font-extrabold text-white mb-2 tracking-tight">
             <span class="text-flink-blue">Flink</span> Live Streaming Dashboard
         </h1>
-        <p class="text-gray-400 text-sm">Monitoring via Spring Boot WebSocket Backend (ws://localhost:8080/metrics-feed)</p>
+        <p class="text-gray-400 text-sm">Real-time monitoring via WebSocket (ws://localhost:8088/metrics-feed)</p>
         <div id="status" class="mt-4 p-2 rounded-lg text-sm font-semibold transition-all duration-300">
             Connecting to WebSocket Backend...
         </div>
     </header>
 
-    <div id="metrics-container" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-        <!-- Metric Cards will be inserted here -->
-    </div>
+    <!-- Throughput Section -->
+    <section class="mb-8">
+        <h2 class="text-2xl font-bold mb-4 text-gray-200 flex items-center">
+            <span class="w-2 h-8 bg-flink-blue mr-3 rounded"></span>
+            Throughput Metrics
+        </h2>
+        <div id="throughput-metrics" class="grid grid-cols-1 md:grid-cols-2 gap-6"></div>
+    </section>
 
+    <!-- Latency Section -->
+    <section class="mb-8">
+        <h2 class="text-2xl font-bold mb-4 text-gray-200 flex items-center">
+            <span class="w-2 h-8 bg-yellow-500 mr-3 rounded"></span>
+            Latency Metrics
+        </h2>
+        <div id="latency-metrics" class="grid grid-cols-1 md:grid-cols-2 gap-6"></div>
+    </section>
+
+    <!-- Checkpoint Section -->
+    <section class="mb-8">
+        <h2 class="text-2xl font-bold mb-4 text-gray-200 flex items-center">
+            <span class="w-2 h-8 bg-green-500 mr-3 rounded"></span>
+            Checkpoint Metrics
+        </h2>
+        <div id="checkpoint-metrics" class="grid grid-cols-1 md:grid-cols-2 gap-6"></div>
+    </section>
+
+    <!-- Performance Section -->
+    <section class="mb-8">
+        <h2 class="text-2xl font-bold mb-4 text-gray-200 flex items-center">
+            <span class="w-2 h-8 bg-red-500 mr-3 rounded"></span>
+            Performance Metrics
+        </h2>
+        <div id="performance-metrics" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6"></div>
+    </section>
+
+    <!-- Logs -->
     <div class="mt-10">
-        <h2 class="text-xl font-semibold mb-3 text-gray-300">Architecture Note & Live Log</h2>
-        <div class="bg-card-bg p-4 rounded-lg mb-4 text-xs text-gray-400 border border-gray-700">
-            <p class="font-bold text-gray-200 mb-1">Architecture Note (WebSocket Proxy):</p>
-            <p>This frontend connects to the **Spring Boot Backend** via a WebSocket (STOMP protocol) at <code>ws://localhost:8080/metrics-feed</code>. The backend handles the scheduled queries to Prometheus and pushes updates in real-time to this dashboard, fulfilling the secure, decoupled architecture.</p>
-        </div>
+        <h2 class="text-xl font-semibold mb-3 text-gray-300">Live Event Log</h2>
         <pre id="log" class="bg-gray-800 p-4 rounded-lg text-xs text-gray-300 overflow-x-auto h-48 border border-gray-700"></pre>
     </div>
 </div>
@@ -60,37 +89,29 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/stomp.js/2.3.3/stomp.min.js"></script>
 
 <script>
-    // ======================================================================================
-    // 1. CONFIGURATION
-    // ======================================================================================
-    // IMPORTANT: These must match your Spring Boot WebSocket configuration
-    const WEBSOCKET_ENDPOINT = 'http://localhost:8088/metrics-feed'; // Spring Boot endpoint
-    const SUBSCRIPTION_TOPIC = '/topic/metrics'; // Topic published by MetricsService.java
+    const WEBSOCKET_ENDPOINT = 'http://localhost:8088/metrics-feed';
+    const SUBSCRIPTION_TOPIC = '/topic/metrics';
 
-    const METRICS_CONFIG = [
-        {
-            id: 'input_rate',
-            title: 'Input Rate (All Tasks)',
-            unit: 'records/sec',
-            initialValue: 'Waiting for feed...'
-        },
-        {
-            id: 'output_rate',
-            title: 'Output Rate (All Sinks)',
-            unit: 'records/sec',
-            initialValue: 'Waiting for feed...'
-        },
-        {
-            id: 'checkpoint_size',
-            title: 'Latest Checkpoint Size',
-            unit: 'MB',
-            initialValue: 'Waiting for feed...'
-        }
-    ];
-
-    // ======================================================================================
-    // 2. LOGGING AND UTILITIES
-    // ======================================================================================
+    const METRICS_CONFIG = {
+        throughput: [
+            { id: 'input_rate', title: 'Input Rate', unit: 'rec/s', icon: '📥', color: 'blue' },
+            { id: 'output_rate', title: 'Output Rate', unit: 'rec/s', icon: '📤', color: 'blue' }
+        ],
+        latency: [
+            { id: 'avg_latency', title: 'Average Latency', unit: 'ms', icon: '⏱️', color: 'yellow' },
+            { id: 'max_latency', title: 'Max Latency', unit: 'ms', icon: '⚠️', color: 'yellow' }
+        ],
+        checkpoint: [
+            { id: 'checkpoint_size', title: 'Checkpoint Size', unit: 'MB', icon: '💾', color: 'green' },
+            { id: 'checkpoint_duration', title: 'Checkpoint Duration', unit: 'ms', icon: '⏲️', color: 'green' }
+        ],
+        performance: [
+            { id: 'backpressure', title: 'Backpressure', unit: '%', icon: '🔄', color: 'red' },
+            { id: 'cpu_usage', title: 'CPU Usage', unit: '%', icon: '💻', color: 'red' },
+            { id: 'heap_memory_used', title: 'Heap Used', unit: 'MB', icon: '🧠', color: 'red' },
+            { id: 'heap_memory_max', title: 'Heap Max', unit: 'MB', icon: '📊', color: 'red' }
+        ]
+    };
 
     const logElement = document.getElementById('log');
 
@@ -100,10 +121,6 @@
         logElement.textContent += `[${timestamp}] [${prefix}] ${message}\n`;
         logElement.scrollTop = logElement.scrollHeight;
     }
-
-    // ======================================================================================
-    // 3. WEBSOCKET CLIENT
-    // ======================================================================================
 
     class WebSocketClient {
         constructor(endpoint, topic, renderer) {
@@ -115,84 +132,95 @@
 
         connect() {
             try {
-                // 1. Create a SockJS instance for compatibility
                 const socket = new SockJS(this.endpoint);
-                // 2. Use STOMP over the SockJS connection
                 this.stompClient = Stomp.over(socket);
-                this.stompClient.debug = null; // Disable STOMP logging in console
+                this.stompClient.debug = null;
 
                 this.stompClient.connect({}, (frame) => {
                     log('WebSocket connection established successfully.', 'info');
                     this.renderer.handleStatusUpdate({
                         isReady: true,
-                        message: `Connected to Spring Backend via WebSocket. Waiting for metric push...`
+                        message: `✓ Connected - Receiving live metrics`
                     });
 
-                    // 3. Subscribe to the destination topic
                     this.stompClient.subscribe(this.topic, (message) => {
-                        // The payload comes from MetricsService.java's template.convertAndSend()
                         const data = JSON.parse(message.body);
                         this.renderer.handleMetricUpdate(data);
                     });
                 }, (error) => {
-                    log('WebSocket connection error. Retrying in 5s. Ensure Spring Boot is running on port 8088.', 'error');
+                    log('WebSocket connection error. Retrying in 5s...', 'error');
                     this.renderer.handleStatusUpdate({
                         isReady: false,
-                        message: `Connection failed. Retrying in 5s...`
+                        message: `✗ Connection failed. Retrying...`
                     });
-                    setTimeout(() => this.connect(), 5000); // Attempt to reconnect
+                    setTimeout(() => this.connect(), 5000);
                 });
             } catch (e) {
                 log('Fatal error during WebSocket setup: ' + e.message, 'error');
-                this.renderer.handleStatusUpdate({
-                    isReady: false,
-                    message: `Setup error. Check browser console.`
-                });
             }
         }
     }
 
-    // ======================================================================================
-    // 4. DASHBOARD RENDERER (Frontend Logic)
-    // ======================================================================================
-
     class DashboardRenderer {
         constructor(config) {
             this.config = config;
-            this.container = document.getElementById('metrics-container');
             this.statusElement = document.getElementById('status');
-            this.configMap = new Map(config.map(item => [item.id, item]));
+            this.configMap = new Map();
 
             this.renderInitialState();
         }
 
         renderInitialState() {
-            this.container.innerHTML = this.config.map(metric => `
-                    <div id="card-${metric.id}" class="bg-card-bg p-6 rounded-xl shadow-xl transition duration-300 border-t-4 border-flink-blue">
-                        <div class="text-sm font-medium text-gray-400 mb-1">${metric.title}</div>
-                        <div class="text-5xl font-extrabold text-white">
-                            <span id="value-${metric.id}">${metric.initialValue}</span>
-                            <span class="text-xl font-semibold text-gray-400 ml-2" id="unit-${metric.id}">${metric.unit}</span>
-                        </div>
-                        <div class="text-xs text-gray-500 mt-2 truncate">
-                            Job: <span id="jobname-${metric.id}">N/A</span>
-                        </div>
+            Object.entries(this.config).forEach(([section, metrics]) => {
+                const container = document.getElementById(`${section}-metrics`);
+                if (!container) return;
+
+                container.innerHTML = metrics.map(metric => {
+                    this.configMap.set(metric.id, metric);
+                    return this.createMetricCard(metric);
+                }).join('');
+            });
+        }
+
+        createMetricCard(metric) {
+            const borderColor = {
+                blue: 'border-flink-blue',
+                yellow: 'border-yellow-500',
+                green: 'border-green-500',
+                red: 'border-red-500'
+            }[metric.color] || 'border-flink-blue';
+
+            return `
+                <div id="card-${metric.id}" class="metric-card bg-card-bg p-6 rounded-xl shadow-xl border-t-4 ${borderColor}">
+                    <div class="flex items-center justify-between mb-2">
+                        <div class="text-sm font-medium text-gray-400">${metric.title}</div>
+                        <span class="text-2xl">${metric.icon}</span>
                     </div>
-                `).join('');
+                    <div class="text-4xl font-extrabold text-white mb-1">
+                        <span id="value-${metric.id}" class="pulse">--</span>
+                        <span class="text-lg font-semibold text-gray-400 ml-2">${metric.unit}</span>
+                    </div>
+                    <div class="text-xs text-gray-500 mt-2 truncate">
+                        Job: <span id="jobname-${metric.id}">Waiting...</span>
+                    </div>
+                </div>
+            `;
         }
 
         handleMetricUpdate(data) {
-            // Expected Data structure from Java Backend: {id: 'input_rate', value: '0.50', jobName: 'Remittance_Metrics_Job'}
             const metricConfig = this.configMap.get(data.id);
             if (!metricConfig) return;
 
             const valueEl = document.getElementById(`value-${data.id}`);
             const jobNameEl = document.getElementById(`jobname-${data.id}`);
 
-            if (valueEl) valueEl.textContent = data.value;
+            if (valueEl) {
+                valueEl.textContent = data.value;
+                valueEl.classList.remove('pulse');
+            }
             if (jobNameEl && data.jobName) jobNameEl.textContent = data.jobName;
 
-            log(`Metric pushed: ${metricConfig.title} -> ${data.value} ${metricConfig.unit}`, 'info');
+            log(`${metricConfig.title}: ${data.value} ${metricConfig.unit}`, 'info');
         }
 
         handleStatusUpdate(data) {
@@ -205,10 +233,6 @@
             }
         }
     }
-
-    // ======================================================================================
-    // 5. APPLICATION INITIALIZATION
-    // ======================================================================================
 
     document.addEventListener('DOMContentLoaded', () => {
         const renderer = new DashboardRenderer(METRICS_CONFIG);

@@ -46,15 +46,13 @@ services:
     container_name: flink-jobmanager
     ports:
       - "8082:8081"
-      - "9250:9251"
+      - "9251:9251"  # ✅ FIXED: Changed from 9250:9251
     environment:
       JOB_MANAGER_RPC_ADDRESS: flink-jobmanager
     volumes:
-      - ./flink-conf/flink-conf.yaml:/opt/flink/conf/flink-conf.yaml:ro
+      - ./flink-conf/flink-conf-jobmanager.yaml:/opt/flink/conf/flink-conf.yaml:ro  # ✅ ADDED
       - ./build/libs/stream-processing-flink-fat-1.0.jar:/opt/flink/usrlib/stream-processing-flink-fat-1.0.jar
-      # FIX: Correctly mounting the JAR from the root directory (where this YML is located)
-      - ./flink-metrics-prometheus-1.18.0.jar:/opt/flink/plugins/metrics-prometheus/flink-metrics-prometheus-1.18.0.jar
-
+      - ./flink-plugins:/opt/flink/plugins  # ✅ FIXED: Removed duplicate, kept only this
     command: jobmanager
     networks:
       - flink-kafka-net
@@ -68,11 +66,9 @@ services:
       - flink-jobmanager
     environment:
       JOB_MANAGER_RPC_ADDRESS: flink-jobmanager
-      METRICS_REPORTER_PROM_PORT: 9252
     volumes:
-      - ./flink-conf/flink-conf.yaml:/opt/flink/conf/flink-conf.yaml:ro
-      # FIX: Correctly mounting the JAR from the root directory (where this YML is located)
-      - ./flink-metrics-prometheus-1.18.0.jar:/opt/flink/plugins/metrics-prometheus/flink-metrics-prometheus-1.18.0.jar
+      - ./flink-conf/flink-conf-taskmanager.yaml:/opt/flink/conf/flink-conf.yaml:ro
+      - ./flink-plugins:/opt/flink/plugins
     command: taskmanager
     networks:
       - flink-kafka-net
